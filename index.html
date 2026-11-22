@@ -141,6 +141,14 @@ nav.tabs a[aria-current="page"]::before{content:"";position:absolute;top:-1px;le
 .glyph.good{color:var(--good)}
 .glyph.warn{color:var(--warn)}
 .glyph.bad{color:var(--bad)}
+.esum{gap:12px}
+.sum-top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.sum-top .num:not(.huge){font-size:20px;color:var(--muted)}
+.sum-pct{margin-left:6px;font-weight:700}
+.wk-list{display:flex;flex-wrap:wrap;gap:6px}
+.wk{padding:4px 10px;border-radius:8px;background:var(--tint);font-family:var(--f-num);font-size:13px}
+.wk b{font-family:var(--f-display);font-weight:800;font-size:15px}
+.esum .btn{align-self:flex-start}
 .slots{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
 .slot{min-width:46px;padding:6px 6px 4px;border-radius:10px;border:1.5px dashed var(--line);text-align:center;display:flex;flex-direction:column;align-items:center;gap:1px}
 .slot .k{font-family:var(--f-display);font-weight:800;font-size:18px;line-height:1.25;min-height:1.25em}
@@ -323,6 +331,7 @@ nav.tabs a[aria-current="page"]::before{content:"";position:absolute;top:-1px;le
       </div>
     </div>
     <div class="slots" id="e-slots" hidden></div>
+    <div class="card esum" id="e-sum" hidden></div>
     <div class="ladder" id="e-ladder" role="group" aria-label="階名ラダー"></div>
     <div class="actions" id="e-actions"></div>
   </section>
@@ -624,7 +633,7 @@ function enter(v){
   if(v==='log')renderLog();
 }
 function leave(v){
-  if(v==='ear'){E.run++;E.passiveOn=false;stopAll();}
+  if(v==='ear')interruptEar();
   if(v==='sing'){stopMic(false);droneOff();setDroneBtn(false);clearInterval(SG.readT);stopAll();}
   if(v==='rhythm')rStop(true);
 }
@@ -633,7 +642,7 @@ function leave(v){
 const MENU=[
   {f:'ear',goal:20,unit:'問',title:'機能聴音',desc:'カデンツのあとに鳴る1音を、階名で答える',to:()=>{setEarSub('one');go('ear');}},
   {f:'passive',goal:10,unit:'音',title:'聴くだけ',desc:'答えずに聴き、正解の階名と解決を浴びる（考える練習の合間に）',to:()=>{setEarSub('passive');go('ear');}},
-  {f:'mel',goal:3,unit:'問',title:'記憶聴音',desc:'短い旋律を聴き終えてから、まとめて階名で書き取る',to:()=>{setEarSub('mel');go('ear');}},
+  {f:'mel',goal:5,unit:'問',title:'記憶聴音',desc:'短い旋律を聴き終えてから、まとめて階名で書き取る',to:()=>{setEarSub('mel');go('ear');}},
   {f:'sing',goal:2,unit:'曲',title:'新曲視唱',desc:'黙読 → 調を聴く → 歌って録音 → 1音ずつ音程を確認',to:()=>go('sing')},
   {f:'rhythm',goal:3,unit:'回',title:'ギャップクリック',desc:'クリックが消える小節でも、拍を保てるかを測る',to:()=>go('rhythm')}
 ];
@@ -672,8 +681,9 @@ function renderToday(){
 $('#t-next-tip').addEventListener('click',()=>{tipI=(tipI+1)%TIPS.length;$('#t-tip').textContent=TIPS[tipI];});
 
 /* ========== 聴音 ========== */
-const E={sub:'one',lv:Object.assign({one:1,mel:1},store.get('earLv',{})),key:null,mode:'major',T:60,qn:0,q:null,answering:false,listening:false,first:true,
-  score:{one:[0,0],mel:[0,0],passive:[0,0]},melLen:store.get('melLen',4),maxPlays:store.get('melPlays',2),playsLeft:0,input:[],checked:false,run:0,passiveOn:false,keyDirty:true,lastPc:null,keyChanged:false,needCad:true,lastRes:null};
+const SET_SIZE={one:20,mel:5,passive:10};
+const E={sub:'one',lv:Object.assign({one:1,mel:1},store.get('earLv',{})),key:null,mode:'major',T:60,qn:0,q:null,answering:false,answered:false,listening:false,first:true,
+  set:null,done:false,qStart:0,melLen:store.get('melLen',4),maxPlays:store.get('melPlays',2),playsLeft:0,input:[],checked:false,run:0,passiveOn:false,keyDirty:true,lastPc:null,keyChanged:false,needCad:true,lastRes:null};
 const LV_TXT={one:{1:null,2:null,3:'全音階',4:'全音階・音域広め',5:'12音すべて'},mel:{1:null,2:null,3:'1オクターブ',4:'跳躍あり',5:'半音を含む'}};
 function lvText(sub,l){
   const kind=sub==='mel'?'mel':'one';
@@ -681,7 +691,10 @@ function lvText(sub,l){
   if(l===2)return lab(0,E.mode)+'〜'+lab(7,E.mode);
   return LV_TXT[kind][l];
 }
-function setEarSub(sub){E.sub=sub;E.run++;E.passiveOn=false;E.q=null;E.input=[];E.checked=false;stopAll();if(cur==='ear')renderEar();}
+function newSet(){E.set={sub:E.sub,size:SET_SIZE[E.sub],n:0,ok:0,per:{},times:[],notesN:0,notesOk:0,lv:E.lv[E.sub==='mel'?'mel':'one']};E.done=false;showSummary(false);}
+function resetSet(){E.set=null;E.done=false;E.q=null;E.input=[];E.checked=false;E.answered=false;showSummary(false);}
+function needNewSet(){return !E.set||E.done||E.set.sub!==E.sub;}
+function setEarSub(sub){E.sub=sub;E.run++;E.passiveOn=false;stopAll();resetSet();if(cur==='ear')renderEar();}
 function ensureKey(force){
   const periodic=(S.key==='random'||S.mode==='both')&&E.qn>0&&E.qn%5===0;
   if(force||E.keyDirty||!E.key||periodic){
@@ -700,29 +713,32 @@ function renderEar(){
   $('#e-key').textContent=keyName(E.key,E.mode);
   const lvKey=E.sub==='mel'?'mel':'one';
   const lvBox=$('#e-lv');lvBox.innerHTML='';
-  for(let l=1;l<=5;l++)lvBox.append(h('button',{class:'chip',type:'button','aria-pressed':String(E.lv[lvKey]===l),onclick:()=>{E.lv[lvKey]=l;store.set('earLv',E.lv);E.run++;E.passiveOn=false;stopAll();E.q=null;E.input=[];E.checked=false;renderEar();}},h('b',{},'Lv'+l),lvText(E.sub,l)));
+  for(let l=1;l<=5;l++)lvBox.append(h('button',{class:'chip',type:'button','aria-pressed':String(E.lv[lvKey]===l),onclick:()=>setEarLv(l)},h('b',{},'Lv'+l),lvText(E.sub,l)));
   const mo=$('#e-melopts');mo.hidden=E.sub!=='mel';mo.innerHTML='';
   if(E.sub==='mel'){
     mo.append(h('span',{class:'chip-label'},'音の数'));
-    [3,4,6,8].forEach(n=>mo.append(h('button',{class:'chip',type:'button','aria-pressed':String(E.melLen===n),onclick:()=>{E.melLen=n;store.set('melLen',n);E.q=null;E.input=[];E.run++;stopAll();renderEar();}},n+'音')));
+    [3,4,6,8].forEach(n=>mo.append(h('button',{class:'chip',type:'button','aria-pressed':String(E.melLen===n),onclick:()=>{E.melLen=n;store.set('melLen',n);E.run++;stopAll();resetSet();renderEar();}},n+'音')));
     mo.append(h('span',{class:'chip-label',style:'margin-left:8px'},'再生'));
     [1,2,3].forEach(n=>mo.append(h('button',{class:'chip',type:'button','aria-pressed':String(E.maxPlays===n),onclick:()=>{E.maxPlays=n;store.set('melPlays',n);renderEar();}},n+'回')));
   }
-  $('#e-slots').hidden=E.sub!=='mel';
-  $('#e-score-l').textContent=E.sub==='mel'?'全部正解':E.sub==='passive'?'聴いた音':'1回目で正解';
-  if(!E.q){glyph(E.sub==='mel'?'♪':'？');hint(E.sub==='mel'?'カデンツ→旋律→書き取り':E.sub==='passive'?'流しっぱなしで聴くだけ':'カデンツ→1音→階名で答える');}
+  if(!E.q&&!E.done){glyph(E.sub==='mel'?'♪':'？');hint(E.sub==='mel'?`カデンツ→旋律→書き取り（${SET_SIZE.mel}問）`:E.sub==='passive'?`答えずに聴く（${SET_SIZE.passive}音）`:`カデンツ→1音→階名で答える（${SET_SIZE.one}問）`);}
   setScore();renderSlots();updateEarActions();
-  requestAnimationFrame(buildEarLadder);
+  if(E.done)showSummary(true);else requestAnimationFrame(buildEarLadder);
 }
+function setEarLv(l){E.lv[E.sub==='mel'?'mel':'one']=l;store.set('earLv',E.lv);E.run++;E.passiveOn=false;stopAll();resetSet();renderEar();}
 function glyph(t,cls,sub){const g=$('#e-glyph');g.textContent=t;g.className='glyph'+(cls?' '+cls:'');$('#e-glyph-n').textContent=sub||'';}
 function hint(t){$('#e-hint').textContent=t;}
-function setScore(){const s=E.score[E.sub];$('#e-score').textContent=E.sub==='passive'?String(s[0]):`${s[1]} / ${s[0]}`;}
+function setScore(){
+  const st=E.set&&E.set.sub===E.sub?E.set:null;const size=SET_SIZE[E.sub];
+  $('#e-score').textContent=`${st?st.n:0} / ${size}`;
+  $('#e-score-l').textContent=E.sub==='passive'?'音':E.sub==='mel'?`問・全部正解 ${st?st.ok:0}`:`問・1回目で正解 ${st?st.ok:0}`;
+}
 function activePcs(){
   if(E.sub==='mel'){const l=E.lv.mel;const p=POOL[E.mode][l];return {pcs:new Set(p),top:l>=3};}
   return {pcs:new Set(POOL[E.mode][E.lv.one]),top:true};
 }
 function buildEarLadder(){
-  const el=$('#e-ladder');if(!el||cur!=='ear')return;
+  const el=$('#e-ladder');if(!el||cur!=='ear'||E.done)return;
   const main=$('#main');const actions=$('#e-actions');
   const top=el.getBoundingClientRect().top-main.getBoundingClientRect().top+main.scrollTop;
   const H=clamp(main.clientHeight-top-actions.offsetHeight-34,330,470);
@@ -760,23 +776,31 @@ function lightPc(pc){rungs().forEach(r=>{const s=+r.dataset.s;if(mod12(s)===pc)r
 function updateEarActions(){
   const a=$('#e-actions');a.innerHTML='';
   const B=(txt,fn,opt={})=>h('button',{type:'button',class:'btn'+(opt.primary?' primary':''),disabled:!!opt.disabled,onclick:fn},txt);
+  if(E.done){
+    a.append(B('今日のメニュー',()=>go('today')),B('もう1セット',()=>startSet(),{primary:true}));return;
+  }
   if(E.sub==='one'){
-    a.append(B('カデンツ',()=>{if(E.key)seq().cadence(E.T,E.mode);},{disabled:!E.q}),
-      B('もう一度',()=>{if(E.q)seq().note(E.q.m,1.1);},{disabled:!E.q}),
-      B(E.q?'次へ':'はじめる',()=>askOne(),{primary:true}));
+    let main;
+    if(!E.q)main=B('はじめる',()=>askOne(),{primary:true});
+    else if(!E.answered)main=B('答えを見る',revealOne,{primary:true,disabled:!E.answering});
+    else main=B(E.set&&E.set.n>=E.set.size?'結果を見る':'次へ',()=>E.set&&E.set.n>=E.set.size?finishSet():askOne(),{primary:true});
+    a.append(B('カデンツ',()=>{if(E.key)seq().cadence(E.T,E.mode);},{disabled:!E.q}),B('もう一度',()=>{if(E.q)seq().note(E.q.m,1.1);},{disabled:!E.q}),main);
   }else if(E.sub==='mel'){
     if(!E.q){a.append(B('はじめる',()=>askMel(),{primary:true}));return;}
     if(E.checked){
-      a.append(B('正解を聴く',()=>{const s=seq();E.q.mel.forEach(d=>s.note(E.T+d,0.55));}),B('次の問題',()=>askMel(),{primary:true}));
+      const last=E.set&&E.set.n>=E.set.size;
+      a.append(B('正解を聴く',()=>{const s=seq();E.q.mel.forEach(d=>s.note(E.T+d,0.55));}),B(last?'結果を見る':'次の問題',()=>last?finishSet():askMel(),{primary:true}));
     }else{
       a.append(B(`もう一度（残り${E.playsLeft}）`,()=>playMel(E.run,false),{disabled:E.listening||E.playsLeft<=0}),
         B('1つ消す',()=>{E.input.pop();renderSlots();updateEarActions();},{disabled:!E.input.length||E.listening}),
         B('答え合わせ',checkMel,{primary:true,disabled:E.input.length!==E.melLen}));
     }
   }else{
-    a.append(E.passiveOn?B('停止',()=>{E.run++;E.passiveOn=false;stopAll();updateEarActions();hint('止めました');}):B('開始',passiveLoop,{primary:true}));
+    a.append(E.passiveOn?B('停止',()=>{E.run++;E.passiveOn=false;stopAll();updateEarActions();hint('止めました');}):B(E.set&&!E.done&&E.set.n>0?'続ける':'開始',passiveLoop,{primary:true}));
   }
 }
+function interruptEar(){E.run++;E.passiveOn=false;stopAll();if(E.sub==='one'&&E.q&&!E.answered)E.q=null;if(E.sub==='mel'&&E.q&&!E.checked){E.q=null;E.input=[];}E.listening=false;E.answering=false;if(cur==='ear')updateEarActions();}
+function startSet(){E.run++;stopAll();resetSet();renderEar();requestAnimationFrame(()=>{if(E.sub==='one')askOne();else if(E.sub==='mel')askMel();else passiveLoop();});}
 function randomQuestionPitch(lv){
   const pool=POOL[E.mode][lv];let pc=rnd(pool);let g=0;
   if(pool.length>2)while(pc===E.lastPc&&g++<10)pc=rnd(pool);
@@ -786,20 +810,36 @@ function randomQuestionPitch(lv){
   return {pc,m};
 }
 async function askOne(){
+  if(needNewSet())newSet();
+  if(E.set.n>=E.set.size){finishSet();return;}
   stopAll();const id=++E.run;ensureKey();
-  E.q=randomQuestionPitch(E.lv.one);E.first=true;E.answering=false;E.qn++;
+  E.q=randomQuestionPitch(E.lv.one);E.first=true;E.answering=false;E.answered=false;E.qn++;
   const cad=S.cadence==='every'||E.needCad;E.needCad=false;
-  clearRungs();glyph('？');hint(cad?'カデンツで調を感じてから…':'聴いて、階名を選んでください');updateEarActions();
+  clearRungs();glyph('？');hint(cad?'カデンツで調を感じてから…':'聴いて、階名を選んでください');updateEarActions();setScore();
   const s=seq();if(cad)s.cadence(E.T,E.mode);
   const tn=s.t;s.note(E.q.m,1.2);
   await waitUntil(tn);if(id!==E.run)return;
-  E.answering=true;hint('この音の階名は？');
+  E.answering=true;E.qStart=performance.now();hint('この音の階名は？');updateEarActions();
 }
 function resolveSeq(force){
   if(!S.resolve&&!force)return sleep(200);
   const path=RES[E.mode][E.q.pc];const base=E.q.m-E.q.pc;const s=seq();
   path.forEach((p,i)=>s.note(base+p,i===path.length-1?0.9:0.3,0.5));
   return s.wait();
+}
+function recordOne(ok){
+  const st=E.set,pc=E.q.pc;
+  recDeg(E.mode,pc,ok);bump('ear');if(ok)bump('earOk');
+  st.n++;if(ok){st.ok++;st.times.push((performance.now()-E.qStart)/1000);}
+  const r=st.per[pc]||(st.per[pc]={n:0,ok:0,mode:E.mode});r.n++;if(ok)r.ok++;
+  setScore();
+}
+function afterAnswer(id){
+  resolveSeq().then(async()=>{
+    if(id!==E.run)return;
+    if(E.set.n>=E.set.size){await sleep(450);if(id===E.run)finishSet();return;}
+    if(S.autoNext){await sleep(380);if(id===E.run)askOne();}
+  });
 }
 function onRung(s,btn){
   if(E.sub==='mel')return inputMel(s,btn);
@@ -809,37 +849,48 @@ function onRung(s,btn){
   }
   const pc=mod12(s);
   if(pc===E.q.pc){
-    E.answering=false;const first=E.first;const id=E.run;
-    recDeg(E.mode,E.q.pc,first);E.score.one[0]++;if(first)E.score.one[1]++;bump('ear');if(first)bump('earOk');setScore();
+    E.answering=false;E.answered=true;const first=E.first;const id=E.run;
+    recordOne(first);
     clearRungs();markRung(btn,'good');glyph(lab(pc,E.mode),first?'good':'warn',nnOct(E.q.m,E.T,E.key));hint(first?'正解':'正解（2回目以降）');
-    resolveSeq().then(async()=>{if(id!==E.run)return;if(S.autoNext){await sleep(380);if(id===E.run)askOne();}});
+    updateEarActions();afterAnswer(id);
   }else{
     E.first=false;markRung(btn,'bad');
     const near=E.T+pc;seq().note(near+12*Math.round((E.q.m-near)/12),0.7,0.45);
     hint('ちがいます。もう一度聴いて選んで');
   }
 }
+function revealOne(){
+  if(!E.q||!E.answering)return;
+  E.answering=false;E.answered=true;const id=E.run;
+  recordOne(false);
+  clearRungs();lightPc(E.q.pc);glyph(lab(E.q.pc,E.mode),'bad',nnOct(E.q.m,E.T,E.key));hint('正解はこの音でした');
+  updateEarActions();afterAnswer(id);
+}
 async function passiveLoop(){
+  if(needNewSet())newSet();
   stopAll();const id=++E.run;E.passiveOn=true;E.q=null;updateEarActions();
-  while(id===E.run){
+  while(id===E.run&&E.set.n<E.set.size){
     ensureKey();E.qn++;
     E.q=randomQuestionPitch(E.lv.one);
     clearRungs();glyph('？');hint('答えなくてOK。心の中で歌ってみて');
     const s=seq();if(S.cadence==='every'||E.needCad)s.cadence(E.T,E.mode);E.needCad=false;
-    s.note(E.q.m,1.1).rest(1.3);await s.wait();if(id!==E.run)break;
+    s.note(E.q.m,1.1).rest(1.3);await s.wait();if(id!==E.run)return;
     lightPc(E.q.pc);glyph(lab(E.q.pc,E.mode),'',nnOct(E.q.m,E.T,E.key));
-    await resolveSeq(true);if(id!==E.run)break;
-    bump('passive');E.score.passive[0]++;setScore();
+    await resolveSeq(true);if(id!==E.run)return;
+    bump('passive');E.set.n++;setScore();
     await sleep(800);
   }
+  if(id===E.run){E.passiveOn=false;finishSet();}
 }
 async function askMel(){
+  if(needNewSet())newSet();
+  if(E.set.n>=E.set.size){finishSet();return;}
   stopAll();const id=++E.run;ensureKey();
   const l=E.lv.mel;const pcs=POOL[E.mode][l];
-  const frame=l<=2?[0,7]:[0,12];const maxStep=l<=2?1:l===3?2:l===4?3:3;
+  const frame=l<=2?[0,7]:[0,12];const maxStep=l<=2?1:l===3?2:3;
   E.q={mel:genMel(E.melLen,pcs,frame,E.mode,maxStep,l===5)};
   E.input=[];E.checked=false;E.lastRes=null;E.playsLeft=E.maxPlays;E.qn++;
-  clearRungs();glyph('♪');renderSlots();
+  clearRungs();glyph('♪');renderSlots();setScore();
   await playMel(id,true);
 }
 async function playMel(id,first){
@@ -861,7 +912,7 @@ function inputMel(s){
   renderSlots();updateEarActions();
 }
 function renderSlots(res){
-  const box=$('#e-slots');if(E.sub!=='mel'){box.hidden=true;return;}
+  const box=$('#e-slots');if(E.sub!=='mel'||E.done){box.hidden=true;return;}
   box.hidden=false;box.innerHTML='';
   for(let i=0;i<E.melLen;i++){
     const v=E.input[i];const r=res||E.lastRes;
@@ -873,10 +924,49 @@ function renderSlots(res){
 function checkMel(){
   const t=E.q.mel;const res=t.map((d,i)=>E.input[i]===d);const ok=res.filter(Boolean).length;const all=ok===t.length;
   E.checked=true;E.lastRes=res;
-  bump('mel');if(all)bump('melOk');E.score.mel[0]++;if(all)E.score.mel[1]++;setScore();
+  bump('mel');if(all)bump('melOk');
+  E.set.n++;if(all)E.set.ok++;E.set.notesN+=t.length;E.set.notesOk+=ok;setScore();
   renderSlots(res);glyph(all?'◎':`${ok}/${t.length}`,all?'good':'warn');
   hint(all?'全部正解':'下の小さい文字が正解です');updateEarActions();
   const s=seq();s.rest(0.25);t.forEach(d=>s.note(E.T+d,0.5));
+}
+/* セットの結果 */
+function finishSet(){
+  E.run++;E.passiveOn=false;E.done=true;E.q=null;E.answering=false;
+  glyph('◎','good');hint('セット終了');
+  showSummary(true);updateEarActions();
+}
+function showSummary(on){
+  const box=$('#e-sum');const lad=$('#e-ladder');
+  if(!on){box.hidden=true;box.innerHTML='';lad.hidden=false;return;}
+  lad.hidden=true;$('#e-slots').hidden=true;box.hidden=false;box.innerHTML='';
+  const st=E.set;if(!st)return;
+  const t=LOG[dayKey()]||{};
+  const goalOf=f=>(MENU.find(m=>m.f===f)||{}).goal;
+  const todayLine=(f,unit)=>{const n=t[f]||0,g=goalOf(f);return h('p',{class:'small muted'},n>=g?`今日の目標（${g}${unit}）達成。今日は合計 ${n}${unit}`:`今日 ${n} / ${g}${unit}`);};
+  if(st.sub==='one'){
+    const pct=Math.round(st.ok/st.size*100);
+    box.append(h('h2',{},`セット終了（${st.size}問・Lv${st.lv}）`),
+      h('div',{class:'sum-top'},h('span',{class:'num huge'},`${st.ok}`),h('span',{class:'num'},`/ ${st.size}`),h('span',{class:'sum-pct'},`1回目で正解 ${pct}%`)));
+    if(st.times.length)box.append(h('p',{},`正解までの平均 ${avg(st.times).toFixed(1)}秒`));
+    const weak=Object.entries(st.per).filter(([,r])=>r.ok<r.n).sort((a,b)=>a[1].ok/a[1].n-b[1].ok/b[1].n);
+    if(weak.length){box.append(h('p',{class:'small muted'},'まちがえた音'),h('div',{class:'wk-list'},weak.map(([pc,r])=>h('span',{class:'wk'},h('b',{},lab(+pc,r.mode)),` ${r.ok}/${r.n}`))));}
+    else box.append(h('p',{},'全問1回目で正解でした。'));
+    if(pct>=90&&st.lv<5)box.append(h('button',{class:'btn sm',type:'button',onclick:()=>{setEarLv(st.lv+1);startSet();}},`Lv${st.lv+1}に進む`));
+    else if(pct<60&&st.lv>1)box.append(h('p',{class:'small muted'},`むずかしければ Lv${st.lv-1} で固めてから戻るのもおすすめです。`));
+    box.append(todayLine('ear','問'));
+  }else if(st.sub==='mel'){
+    const np=st.notesN?Math.round(st.notesOk/st.notesN*100):0;
+    box.append(h('h2',{},`セット終了（${st.size}問・${E.melLen}音・Lv${st.lv}）`),
+      h('div',{class:'sum-top'},h('span',{class:'num huge'},`${st.ok}`),h('span',{class:'num'},`/ ${st.size}`),h('span',{class:'sum-pct'},'問が全部正解')),
+      h('p',{},`音ごとの正解 ${st.notesOk} / ${st.notesN}音（${np}%）`));
+    const nextLen=[3,4,6,8].find(n=>n>E.melLen);
+    if(np>=85&&nextLen)box.append(h('button',{class:'btn sm',type:'button',onclick:()=>{E.melLen=nextLen;store.set('melLen',nextLen);startSet();}},`${nextLen}音に増やす`));
+    box.append(todayLine('mel','問'));
+  }else{
+    box.append(h('h2',{},`${st.size}音 聴きました`),h('p',{},'次は「1音」で、自分で答えてみましょう。'),
+      h('button',{class:'btn sm',type:'button',onclick:()=>{setEarSub('one');startSet();}},'1音へ'),todayLine('passive','音'));
+  }
 }
 $$('#e-sub button').forEach(b=>b.addEventListener('click',()=>{ac();setEarSub(b.dataset.sub);}));
 
@@ -1345,7 +1435,7 @@ $('#l-reset').addEventListener('click',e=>{
   if(Date.now()-resetArm>4000){resetArm=Date.now();b.textContent='もう一度押すと消えます';setTimeout(()=>{b.textContent='記録を消す';},4000);return;}
   LOG={};DEG={major:{},minor:{}};SINGH=[];RH=Object.assign(RH,{streak:0,fails:0,hist:[]});
   store.set('log',LOG);store.set('deg',DEG);store.set('sing',SINGH);saveRH();
-  E.score={one:[0,0],mel:[0,0],passive:[0,0]};b.textContent='記録を消す';resetArm=0;renderLog();toast('記録を消しました');
+  resetSet();b.textContent='記録を消す';resetArm=0;renderLog();toast('記録を消しました');
 });
 
 /* ========== 設定 ========== */
@@ -1360,7 +1450,7 @@ function syncSettingsUI(){
 function applySettings(changed){
   saveS();syncSettingsUI();
   if(A.master)A.master.gain.value=S.vol;
-  if(['mode','key'].includes(changed)){E.keyDirty=true;E.key=null;E.q=null;E.input=[];E.checked=false;E.lastRes=null;E.run++;E.passiveOn=false;stopAll();SG.mel=null;}
+  if(['mode','key'].includes(changed)){E.keyDirty=true;E.key=null;E.run++;E.passiveOn=false;stopAll();resetSet();SG.mel=null;}
   if(changed==='voice')SG.mel=null;
   if(changed==='system'&&SG.mel)renderSing();
   if(cur==='ear')renderEar();
@@ -1380,7 +1470,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#sheet').hidden
 
 /* ========== 起動 ========== */
 document.addEventListener('pointerdown',()=>{if(A.ctx&&A.ctx.state!=='running')A.ctx.resume().catch(()=>{});},{passive:true});
-document.addEventListener('visibilitychange',()=>{if(document.hidden){if(cur==='ear'){E.run++;E.passiveOn=false;stopAll();updateEarActions();}if(cur==='rhythm')rStop(true);stopMic(false);}});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){if(cur==='ear')interruptEar();if(cur==='rhythm')rStop(true);stopMic(false);}});
 let rzT=0;window.addEventListener('resize',()=>{clearTimeout(rzT);rzT=setTimeout(()=>{if(cur==='ear')buildEarLadder();if(cur==='sing'&&SG.frames&&!$('#s-result').hidden)drawGraph();},150);});
 window.addEventListener('hashchange',route);
 route();
